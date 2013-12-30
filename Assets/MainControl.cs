@@ -108,7 +108,11 @@ public class MainControl : MonoBehaviour
         
     }
 
-   
+    [RPC]
+    void SendBomb(NetworkPlayer toPlayer)
+    {
+        playerStatuses[toPlayer].hasBomb = true;
+    }
 
     void OnServerInitialized()
     {
@@ -179,16 +183,22 @@ public class MainControl : MonoBehaviour
         {
             GUILayout.Label("Bomb time: " + bombTime);
 
-            foreach (NetworkPlayer networkPlayer  in playerStatuses.Keys)
+            foreach (NetworkPlayer otherPlayer  in playerStatuses.Keys)
             {
-                if (networkPlayer != Network.player)
+                if (otherPlayer != Network.player)
                 {
-                    if (GUILayout.Button(playerStatuses[networkPlayer].name))
+                    if (GUILayout.Button(playerStatuses[otherPlayer].name))
                     {
-
+                        if (playerStatuses[Network.player].hasBomb)
+                        {
+                            networkView.RPC("SendBomb",RPCMode.All, otherPlayer);
+                        }
                     }
                 }
             }
+
+            if (playerStatuses[Network.player].hasBomb)
+                GUILayout.Label("YOU HAVE THE BOMB!");
         }
         else
         {
