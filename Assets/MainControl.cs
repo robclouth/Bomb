@@ -12,12 +12,18 @@ public class MainControl : MonoBehaviour
     IDictionary<NetworkPlayer, PlayerStatus> playerStatuses;
     private float minBombTime = 15, maxBombTime = 30;
     private float bombTime;
-    private bool isPlaying;
+
     string playerName = "player";
+    private bool isLoser;
+
+    float countDown;
+
+    enum State { WaitingRoom, Countdown, Playing, End };
+    private State state = State.WaitingRoom;
    
     void Awake()
     {
-
+        SetState(State.WaitingRoom);
         MasterServer.ClearHostList();
         MasterServer.RequestHostList("Bomb");
         playerStatuses = new Dictionary<NetworkPlayer, PlayerStatus>();
@@ -36,9 +42,34 @@ public class MainControl : MonoBehaviour
             Application.Quit(); 
         }
 
-        if (isPlaying)
+        if (state == State.Playing)
         {
             bombTime -= Time.deltaTime;
+
+            if (Network.isServer)
+            {
+                if (bombTime < 0)
+                {
+      
+                    foreach (NetworkPlayer player in playerStatuses.Keys)
+                    {
+                        if (playerStatuses[player].hasBomb)
+                        {
+                            networkView.RPC("EndGame", RPCMode.All, player);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private void SetState(State newState)
+    {
+        state = newState;
+
+        if(state == State.Countdown){
+            countDown = 3;
         }
     }
 
@@ -55,9 +86,23 @@ public class MainControl : MonoBehaviour
     [RPC]
     void BeginGame(NetworkPlayer startingPlayer, float initBombTime)
     {
+        isReady = false;
         bombTime = initBombTime;
         playerStatuses[startingPlayer].hasBomb = true;
-        isPlaying = true;
+        SetState(State.Countdown);
+    }
+
+   
+
+    [RPC]
+    void EndGame(NetworkPlayer loser)
+    {
+        if (loser == Network.player)
+        {
+            isLoser = true;
+        }
+
+        SetState(State.End);
     }
 
     [RPC]
@@ -179,11 +224,11 @@ public class MainControl : MonoBehaviour
 
     void OnGUI()
     {
-        if (isPlaying)
+        if (state == State.Playing)
         {
             GUILayout.Label("Bomb time: " + bombTime);
 
-            foreach (NetworkPlayer otherPlayer  in playerStatuses.Keys)
+            foreach (NetworkPlayer otherPlayer in playerStatuses.Keys)
             {
                 if (otherPlayer != Network.player)
                 {
@@ -191,7 +236,8 @@ public class MainControl : MonoBehaviour
                     {
                         if (playerStatuses[Network.player].hasBomb)
                         {
-                            networkView.RPC("SendBomb",RPCMode.All, otherPlayer);
+                            playerStatuses[Network.player].hasBomb = false;
+                            networkView.RPC("SendBomb", RPCMode.All, otherPlayer);
                         }
                     }
                 }
@@ -200,11 +246,41 @@ public class MainControl : MonoBehaviour
             if (playerStatuses[Network.player].hasBomb)
                 GUILayout.Label("YOU HAVE THE BOMB!");
         }
-        else
+        else if (state == State.Countdown)
+        {
+            GUILayout.Label("" + Mathf.CeilToInt(countDown));
+
+            countDown -= Time.deltaTime;
+            if (countDown < 0)
+            {
+                SetState(State.Playing);
+            }
+        }
+        else if (state == State.End)
+        {
+            if (isLoser)
+            {
+                GUILayout.Label("You Lose!");
+            }
+            else
+            {
+                GUILayout.Label("You Win!");
+            }
+
+            if (GUILayout.RepeatButton("Hold to replay"))
+            {
+                if (!isReady && Input.GetMouseButton(0))
+                {
+                    isReady = true;
+                    networkView.RPC("PlayerReady", RPCMode.All, Network.player, true);
+                }
+            }
+        }
+        else if (state == State.WaitingRoom)
         {
             if (!isConnected)
             {
-                playerName = GUI.TextField(new Rect(0, Screen.height/2, Screen.width, 50), playerName, 8);
+                playerName = GUILayout.TextField(playerName, 8);
 
                 HostData[] hosts = MasterServer.PollHostList();
                 foreach (var host in hosts)
@@ -224,7 +300,7 @@ public class MainControl : MonoBehaviour
 
                 if (GUILayout.Button("Host Game"))
                 {
-                    if (playerName.Length > 0) 
+                    if (playerName.Length > 0)
                         Network.InitializeServer(32, 25002, false);
                 }
             }
@@ -241,14 +317,14 @@ public class MainControl : MonoBehaviour
                     }
                 }
             }
+        }
 
-            if (!Input.GetMouseButton(0))
+        if (!Input.GetMouseButton(0))
+        {
+            if (isReady)
             {
-                if (isReady)
-                {
-                    isReady = false;
-                    networkView.RPC("PlayerReady", RPCMode.All, Network.player, false);
-                }
+                isReady = false;
+                networkView.RPC("PlayerReady", RPCMode.All, Network.player, false);
             }
         }
     }
