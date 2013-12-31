@@ -6,7 +6,7 @@ using System.Linq;
 public class MainControl : MonoBehaviour
 {
     public GUISkin skin;
-    public Texture2D manTex;
+    public Texture2D manTex, winTex, loseTex;
 
     float optimizedWidth = 480;
     float Scale { 
@@ -20,8 +20,23 @@ public class MainControl : MonoBehaviour
     private int playerId;
     private bool isRegistered;
     IDictionary<NetworkPlayer, PlayerStatus> playerStatuses;
-    private float minBombTime = 15, maxBombTime = 30;
-    private float bombTime;
+
+    private float bombTime = 0, prevBombTime = 0;
+    private float bombTimeSlice = 1;
+    private float bombMeanLifetime = 30;
+
+    private bool isSending;
+    private bool isReceiving;
+    NetworkPlayer sendingTo;
+    private float sendTime = 0.25f;
+    private float sendTimer = 0;
+    private float receiveTime = 2f;
+    private float receiveTimer = 0;
+    private bool isReturning;
+    private float returnTime = 0.5f;
+    private float returnTimer = 0;
+
+    private float bombIconPos;
 
     string playerName = "player";
     private bool isLoser;
@@ -32,6 +47,9 @@ public class MainControl : MonoBehaviour
     private State state = State.WaitingRoom;
 
     private NetworkPlayer blockingPlayer;
+   
+  
+
    
     void Awake()
     {
@@ -55,21 +73,81 @@ public class MainControl : MonoBehaviour
 
         if (state == State.Playing)
         {
-            bombTime -= Time.deltaTime;
-
             if (Network.isServer)
             {
-                if (bombTime < 0)
+
+                bombTime += Time.deltaTime;
+                bombTime %= bombTimeSlice;
+
+                if (prevBombTime - bombTime > 0.8f)
                 {
-      
-                    foreach (NetworkPlayer player in playerStatuses.Keys)
+                    if (Random.value < 0/*1 / bombMeanLifetime*/)
                     {
-                        if (playerStatuses[player].hasBomb)
+                        foreach (NetworkPlayer player in playerStatuses.Keys)
                         {
-                            networkView.RPC("EndGame", RPCMode.All, player);
-                            break;
+                            if (playerStatuses[player].hasBomb)
+                            {
+                                networkView.RPC("EndGame", RPCMode.All, player);
+                                break;
+                            }
                         }
                     }
+                }
+
+                prevBombTime = bombTime;
+            }
+
+            if (isSending)
+            {
+                sendTimer += Time.deltaTime;
+                if (sendTimer > sendTime)
+                {
+                    if (playerStatuses[sendingTo].blocking != Network.player)
+                    {
+                        playerStatuses[Network.player].hasBomb = false;
+                        networkView.RPC("SetBombHolder", RPCMode.All, sendingTo);
+                    }
+                    else
+                    {
+                        networkView.RPC("SendBombBlocked", sendingTo, Network.player, returnTime);
+                        isReturning = true;
+                        returnTimer = 0;
+                    }
+                    isSending = false;
+                    sendTimer = 0;
+                }
+
+                bombIconPos = (Screen.width / 2f) * (1 - sendTimer / (sendTime / 2));
+            }
+
+            if (isReceiving)
+            {
+
+                if (receiveTimer > receiveTime)
+                {
+                    isReceiving = false;
+                    bombIconPos = 0;
+                    returnTimer = 0;
+                }
+                else
+                {
+                    receiveTimer += Time.deltaTime;
+                    bombIconPos = (Screen.width / 2f) * (1 - receiveTimer / (receiveTime / 2)) + Screen.width;
+                }
+            }
+
+            if (isReturning)
+            {
+
+
+                if (returnTimer > returnTime)
+                {
+                    isReturning = false;
+                }
+                else
+                {
+                    returnTimer += Time.deltaTime;
+                    bombIconPos = (Screen.width / 2f) * (returnTimer / (returnTime / 2));
                 }
             }
         }
@@ -109,18 +187,17 @@ public class MainControl : MonoBehaviour
         List<NetworkPlayer> players = Enumerable.ToList(playerStatuses.Keys);
         NetworkPlayer startingPlayer = players[Random.Range(0, playerStatuses.Count)];
 
-        float initBombTime = Random.Range(minBombTime, maxBombTime);
-
-        networkView.RPC("BeginGame", RPCMode.All, startingPlayer, initBombTime);
+        networkView.RPC("BeginGame", RPCMode.All, startingPlayer);
     }
 
     [RPC]
-    void BeginGame(NetworkPlayer startingPlayer, float initBombTime)
+    void BeginGame(NetworkPlayer startingPlayer)
     {
         isReady = false;
-        bombTime = initBombTime;
         playerStatuses[startingPlayer].hasBomb = true;
         SetState(State.Countdown);
+        bombTime = 0;
+        prevBombTime = 0;
     }
 
    
@@ -187,9 +264,29 @@ public class MainControl : MonoBehaviour
     }
 
     [RPC]
-    void SendBomb(NetworkPlayer toPlayer)
+    void SendBomb(float time)
     {
-        playerStatuses[toPlayer].hasBomb = true;
+        isReceiving = true;
+        receiveTime = time;
+        receiveTimer = 0;
+        bombIconPos = (Screen.width / 2f) + Screen.width;
+    }
+
+    [RPC]
+    void SendBombBlocked(NetworkPlayer sender, float time)
+    {
+        isReceiving = false;
+        isReturning = true;
+        returnTime = time;
+        returnTimer = 0;
+        bombIconPos = 0;
+        Debug.Log("Bomb blocked");
+    }
+
+    [RPC]
+    void SetBombHolder(NetworkPlayer player)
+    {
+        playerStatuses[player].hasBomb = true;
     }
 
     [RPC]
@@ -337,16 +434,33 @@ public class MainControl : MonoBehaviour
             NetworkPlayer[] players = playerStatuses.Keys.ToArray();
 
             int nButtonsX = 3;
-            int nButtonsY = 2;
+            int nButtonsY = 1;
 
             if (players.Length == 2)
+            {
                 nButtonsX = 1;
-            else if (players.Length == 3 || players.Length == 4)
+                nButtonsY = 1;
+            }
+            else if (players.Length == 3)
+            {
                 nButtonsX = 2;
-            else if (players.Length == 5 || players.Length == 6)
+                nButtonsY = 1;
+            }
+            else if (players.Length == 4 || players.Length == 5)
+            {
+                nButtonsX = 2;
+                nButtonsY = 2;
+            }
+            else if (players.Length == 6 || players.Length == 7)
+            {
                 nButtonsX = 3;
-            else if (players.Length == 7 || players.Length == 8)
+                nButtonsY = 2;
+            }
+            else if (players.Length == 8)
+            {
                 nButtonsX = 4;
+                nButtonsY = 2;
+            }
 
             float buttonScale = Screen.height / 4 < Screen.width / 3 ? Screen.height / 4 : Screen.width / 3;
 
@@ -356,24 +470,24 @@ public class MainControl : MonoBehaviour
             GUIStyle buttonStyle = GUI.skin.GetStyle("NameButton");
             buttonStyle.fontSize = (int)(23 * buttonScale / 200f);
 
-
-
-            for (int i = 0; i < players.Length; i++)
-            {
-                float x = (i % nButtonsX) * buttonScale + buttonOffsetX;
-                float y = (i / nButtonsY) * buttonScale + buttonOffsetY + Screen.height / 2;
-
-                NetworkPlayer otherPlayer = players[i];
+            int i = 0;
+            for (int p = 0; p < players.Length; p++)
+            {    
+                NetworkPlayer otherPlayer = players[p];
                 if (otherPlayer != Network.player)
                 {
+                    float x = (i % nButtonsX) * buttonScale + buttonOffsetX;
+                    float y = (i / nButtonsX) * buttonScale + buttonOffsetY + Screen.height / 2;
+
                     if (playerStatuses[Network.player].hasBomb)
                     {
                         if (GUI.Button(new Rect(x, y, buttonScale, buttonScale), playerStatuses[otherPlayer].name, buttonStyle))
                         {
-                            if (playerStatuses[otherPlayer].blocking != Network.player)
+                            if (!isSending && !isReturning)
                             {
-                                playerStatuses[Network.player].hasBomb = false;
-                                networkView.RPC("SendBomb", RPCMode.All, otherPlayer);
+                                isSending = true;
+                                sendingTo = otherPlayer;
+                                networkView.RPC("SendBomb", otherPlayer, sendTime);
                             }
                         }
                     }
@@ -388,6 +502,8 @@ public class MainControl : MonoBehaviour
                             }
                         }
                     }
+
+                    i++;
                 }
             }
 
@@ -407,17 +523,35 @@ public class MainControl : MonoBehaviour
             GUIStyle shieldIconStyle = GUI.skin.GetStyle("ShieldIcon");
             shieldIconStyle.fixedWidth = shieldIconStyle.fixedHeight = Screen.height / 4.5f;
 
-            float iconOffsetX = (Screen.width - Screen.height / 4) / 2;
-
             if (playerStatuses[Network.player].hasBomb)
             {
+                float bombIconOffsetX = (Screen.width - Screen.height / 4) / 2;
+                if (isSending)
+                    bombIconOffsetX = bombIconPos - bombIconStyle.fixedWidth / 2;
+                else if (isReturning)
+                    bombIconOffsetX = bombIconPos - bombIconStyle.fixedWidth / 2 - Screen.width/2;
+
                 GUI.Label(new Rect(0, 0, Screen.width, Screen.height / 4), "YOU HAVE THE BOMB", textStyle);
-                GUI.Box(new Rect(iconOffsetX, Screen.height / 4, Screen.width, Screen.height / 4), "", bombIconStyle);
+                GUI.Box(new Rect(bombIconOffsetX, Screen.height / 4, Screen.width, Screen.height / 4), "", bombIconStyle);
             }
             else
             {
+                float shieldIconOffsetX = (Screen.width - Screen.height / 4) / 2;
+
                 GUI.Label(new Rect(0, 0, Screen.width, Screen.height / 4), "YOU DO NOT HAVE THE BOMB", textStyle);
-                GUI.Box(new Rect(iconOffsetX, Screen.height / 4, Screen.width, Screen.height / 4), "", shieldIconStyle);
+                GUI.Box(new Rect(shieldIconOffsetX, Screen.height / 4, Screen.width, Screen.height / 4), "", shieldIconStyle);
+
+                if (isReceiving)
+                {
+                    float bombIconOffsetX = bombIconPos - bombIconStyle.fixedWidth / 2;
+                    GUI.Box(new Rect(bombIconOffsetX, Screen.height / 4, Screen.width, Screen.height / 4), "", bombIconStyle);
+                }
+
+                if (isReturning)
+                {
+                   float bombIconOffsetX = bombIconPos - bombIconStyle.fixedWidth / 2 + Screen.width/2;
+                   GUI.Box(new Rect(bombIconOffsetX, Screen.height / 4, Screen.width, Screen.height / 4), "", bombIconStyle);
+                }
             }
         }
         else if (state == State.Countdown)
@@ -425,26 +559,33 @@ public class MainControl : MonoBehaviour
             GUIStyle guiStyle = GUI.skin.GetStyle("CountdownBackground");
             guiStyle.fontSize = (int)(46 * Scale);
 
-            GUI.Box(new Rect(0, 0, Screen.width, Screen.height), "Don't be left with the bomb\n\n" + Mathf.CeilToInt(countDown) + "...", guiStyle);
+            GUI.Box(new Rect(0, 0, Screen.width, Screen.height), "Do not be left with the bomb\n\n" + Mathf.CeilToInt(countDown) + "...", guiStyle);
         }
         else if (state == State.End)
         {
             if (isLoser)
             {
-                GUILayout.Label("You Lose!");
+                GUI.Box(new Rect(0, 0, Screen.width, Screen.height), "", GUI.skin.GetStyle("BombBackground"));
+                GUI.DrawTexture(new Rect(0, 0, Screen.width, 2 * Screen.height / 3), loseTex, ScaleMode.ScaleToFit);
             }
             else
             {
-                GUILayout.Label("You Win!");
+                GUI.Box(new Rect(0, 0, Screen.width, Screen.height), "", GUI.skin.GetStyle("NoBombBackground"));
+                GUI.DrawTexture(new Rect(0, 0, Screen.width, 2 * Screen.height / 3), winTex, ScaleMode.ScaleToFit);
             }
 
-            if (GUILayout.RepeatButton("Hold to replay"))
+            GUIStyle readyButtonStyle = GUI.skin.GetStyle("ReadyButton");
+            readyButtonStyle.fontSize = (int)(10 * Screen.height / 200f);
+            if (!isReady)
+                readyButtonStyle.normal.background = readyButtonStyle.onNormal.background;
+            else
+                readyButtonStyle.normal.background = readyButtonStyle.onActive.background;
+
+
+            if (GUI.Button(new Rect(Screen.width * 0.1f, 3 * Screen.height / 4, Screen.width - Screen.width * 0.2f, Screen.height / 4 - Screen.width * 0.1f), "ready please", readyButtonStyle))
             {
-                if (!isReady && Input.GetMouseButton(0))
-                {
-                    isReady = true;
-                    networkView.RPC("PlayerReady", RPCMode.All, Network.player, true);
-                }
+                isReady = !isReady;
+                networkView.RPC("PlayerReady", RPCMode.AllBuffered, Network.player, isReady, playerName);
             }
         }
         

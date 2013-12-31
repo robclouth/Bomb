@@ -182,6 +182,8 @@ MonoBehaviour:
   m_Name: 
   skin: {fileID: 11400000, guid: f6ac9f21a8c06a242b1040ae6deea405, type: 2}
   manTex: {fileID: 2800000, guid: e3aecb1d31f91e74d954c89eb868cdf0, type: 3}
+  winTex: {fileID: 2800000, guid: 2677df1a28ea633489a3c114581e3102, type: 3}
+  loseTex: {fileID: 2800000, guid: 4426fe0aaa5cb7b48bc13f09ba4e7ae3, type: 3}
 --- !u!4 &1702444697
 Transform:
   m_ObjectHideFlags: 0
